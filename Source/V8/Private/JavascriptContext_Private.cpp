@@ -767,7 +767,7 @@ public:
 
 public:
 
-	TMap<FString, UniquePersistent<Value>> Modules;
+	TMap<FString, v8::Global<Value>> Modules;
 	TArray<FString>& Paths;
 
 	void SetAsDebugContext(int32 InPort)
@@ -1322,9 +1322,163 @@ public:
 		global->Set(V8_KeywordString(isolate(), "CreateStruct"), FunctionTemplate::New(isolate(), fn, self)->GetFunction());
 	}
 
+	/**
+	 * Resolve a module filename to an actual file on disk.
+	 *
+	 * @param moduleFilename An absolute filename, relative filename, or name of the module to resolve.
+	 * @param currentScriptPath Directory relative to which a relative module filename will be resolved. 
+	 * @return The absolute filename of the module, or an empty string (on failure).
+	 */
+	FString ResolveModuleFilename(const FString& moduleFilename, const FString& currentScriptPath)
+	{
+		/**
+		 * Resolve the main module specified in a package.json to a file on disk.
+		 *
+		 * @param packagePath A directory containing a package.json.
+		 * @param resolvedPath The absolute filename of the main module (iff the return value is `true`).
+		 * @return `true` if the main module filename was resolved, `false` otherwise.
+		 */
+		auto resolvePackageMainModule = [this](const FString& packagePath,
+											   FString& resolvedPath) -> bool
+		{
+			FString jsonText;
+			if (FFileHelper::LoadFileToString(jsonText, *(packagePath / TEXT("package.json"))))
+			{
+				jsonText = FString::Printf(TEXT("(function (json) {return json.main;})(%s);"), *jsonText);
+				auto fullPath = IFileManager::Get().ConvertToAbsolutePathForExternalAppForRead(*packagePath);
+#if PLATFORM_WINDOWS
+				fullPath = fullPath.Replace(TEXT("/"), TEXT("\\"));
+#endif
+				auto mainModuleFilename = this->RunScript(fullPath, jsonText, 0);
+				if (mainModuleFilename->IsString())
+				{
+					auto candidatePath = packagePath / StringFromV8(mainModuleFilename);
+					if (candidatePath.EndsWith(TEXT(".js")))
+					{
+						if (FPaths::FileExists(candidatePath))
+						{
+							resolvedPath = candidatePath;
+							return true;
+						}
+					}
+					else
+					{
+						candidatePath += TEXT(".js");
+						if (FPaths::FileExists(candidatePath))
+						{
+							resolvedPath = candidatePath;
+							return true;
+						}
+					}
+				}
+			}
+			return false;
+		};
+
+		auto resolveModule = [&resolvePackageMainModule](const FString& basePath,
+														 const FString& requiredModule,
+														 FString& resolvedPath) -> bool
+		{
+			if (!basePath.IsEmpty() && !FPaths::DirectoryExists(basePath))
+				return false;
+
+			auto candidatePath = basePath.IsEmpty() ? requiredModule : (basePath / requiredModule);
+			if (candidatePath.EndsWith(TEXT(".js")) || candidatePath.EndsWith(TEXT(".json")))
+			{
+				if (FPaths::FileExists(candidatePath))
+				{
+					resolvedPath = candidatePath;
+					return true;
+				}
+				return false;
+			}
+
+			candidatePath = (basePath.IsEmpty() ? requiredModule : (basePath / requiredModule)) + TEXT(".js");
+			if (FPaths::FileExists(candidatePath))
+			{
+				resolvedPath = candidatePath;
+				return true;
+			}
+
+			candidatePath = (basePath.IsEmpty() ? requiredModule : (basePath / requiredModule)) + TEXT(".json");
+			if (FPaths::FileExists(candidatePath))
+			{
+				resolvedPath = candidatePath;
+				return true;
+			}
+
+			candidatePath = (basePath.IsEmpty() ? requiredModule : (basePath / requiredModule)) / TEXT("index.js");
+			if (FPaths::FileExists(candidatePath))
+			{
+				resolvedPath = candidatePath;
+				return true;
+			}
+
+			candidatePath = basePath.IsEmpty() ? requiredModule : (basePath / requiredModule);
+			return resolvePackageMainModule(candidatePath, resolvedPath);
+		};
+
+		auto load_module_paths = [](const FString& base_path)
+		{
+			TArray<FString> Dirs;
+			TArray<FString> Parsed;
+			base_path.ParseIntoArray(Parsed, TEXT("/"));
+			auto PartCount = Parsed.Num();
+			while (PartCount > 0) 
+			{
+				if (Parsed[PartCount - 1].Equals(TEXT("node_modules")))
+				{
+					PartCount--;
+					continue;
+				}
+				else
+				{
+					TArray<FString> Parts;
+					for (int i = 0; i < PartCount; i++)
+					{
+						Parts.Add(Parsed[i]);
+					}
+					FString Dir = FString::Join(Parts, TEXT("/"));
+					Dirs.Add(Dir);
+				}
+				PartCount--;
+			}
+
+			return Dirs;
+		};
+
+		FString resolvedFilename;
+		if (!FPaths::IsRelative(moduleFilename))
+		{
+			return resolveModule(TEXT(""), moduleFilename, resolvedFilename) ? resolvedFilename : TEXT("");
+		}
+
+		if (moduleFilename[0] == '.' && resolveModule(currentScriptPath, moduleFilename, resolvedFilename))
+			return resolvedFilename;
+			
+		for (const auto& path : load_module_paths(currentScriptPath))
+		{
+			if (resolveModule(path, moduleFilename, resolvedFilename))
+				return resolvedFilename;
+			if (resolveModule(path / TEXT("node_modules"), moduleFilename, resolvedFilename))
+				return resolvedFilename;
+		}
+
+		for (const auto& path : this->Paths)
+		{
+			if (resolveModule(path, moduleFilename, resolvedFilename))
+				return resolvedFilename;
+			if (resolveModule(path / TEXT("node_modules"), moduleFilename, resolvedFilename))
+				return resolvedFilename;
+		}
+		return TEXT("");
+	}
+
+	/** Expose `require`, `purgeModules`, and `modules` in the global V8 scope. */
 	void ExposeRequire()
 	{
-		auto fn = [](const FunctionCallbackInfo<Value>& info) {
+		auto RequireWrapper = [](const FunctionCallbackInfo<Value>& info) 
+		{
 			auto isolate = info.GetIsolate();
 			HandleScope scope(isolate);
 
@@ -1333,120 +1487,72 @@ public:
 				return;
 			}
 
-			auto Self = reinterpret_cast<FJavascriptContextImplementation*>((Local<External>::Cast(info.Data()))->Value());
+			auto self = reinterpret_cast<FJavascriptContextImplementation*>((Local<External>::Cast(info.Data()))->Value());
 
-			auto required_module = StringFromV8(info[0]);
+			auto requiredModule = StringFromV8(info[0]);
 
-			bool found = false;
-
-			auto inner = [&](const FString& script_path)
+			auto loadModule = [&self, &info, &isolate](const FString& modulePath) -> bool
 			{
-				auto full_path = IFileManager::Get().ConvertToAbsolutePathForExternalAppForRead(*script_path);
+				auto fullPath = IFileManager::Get().ConvertToAbsolutePathForExternalAppForRead(*modulePath);
 #if PLATFORM_WINDOWS
-				full_path = full_path.Replace(TEXT("/"), TEXT("\\"));
+				fullPath = fullPath.Replace(TEXT("/"), TEXT("\\"));
 #endif
-				auto it = Self->Modules.Find(full_path);
+				// grab the module from the cache if possible
+				auto it = self->Modules.Find(fullPath);
 				if (it)
 				{
 					info.GetReturnValue().Set(Local<Value>::New(isolate, *it));
-					found = true;
 					return true;
 				}
 
-				FString Text;
-				if (FFileHelper::LoadFileToString(Text, *script_path))
+				// module isn't in the cache so load it from disk and cache it
+				FString code;
+				if (FFileHelper::LoadFileToString(code, *fullPath))
 				{
-					auto scriptDir = FPaths::GetPath(full_path);
-					Text = FString::Printf(
+					auto scriptDir = FPaths::GetPath(fullPath);
+					code = FString::Printf(
 						TEXT("(function (global, __filename, __dirname) {"
 							 "  var module = { exports: {}, filename : __filename }, exports = module.exports;"
 							 "  (function() { %s\n})();\n"
 							 "  return module.exports;\n"
 							 "}(this, '%s', '%s'));"),
-						*Text, *full_path, *scriptDir
+						*code, *fullPath, *scriptDir
 					);
-					auto exports = Self->RunScript(full_path, Text, 0);
-					if (exports.IsEmpty())
+					auto moduleExports = self->RunScript(fullPath, code, 0);
+					if (moduleExports.IsEmpty())
 					{
 						UE_LOG(Javascript, Log, TEXT("Invalid script for require"));
 					}
-					Self->Modules.Add(full_path, UniquePersistent<Value>(isolate, exports));
-					info.GetReturnValue().Set(exports);
-					found = true;
+					self->Modules.Add(fullPath, v8::Global<Value>(isolate, moduleExports));
+					info.GetReturnValue().Set(moduleExports);
 					return true;
 				}
 
 				return false;
 			};
 
-			auto inner_maybejs = [&](const FString& script_path)
+			auto loadJson = [&self, &info, &isolate](const FString& jsonPath) -> bool
 			{
-				if (!script_path.EndsWith(TEXT(".js")))
-				{
-					return inner(script_path + TEXT(".js"));
-				}
-				else
-				{
-					return inner(script_path);
-				}
-			};
-
-			auto inner_package_json = [&](const FString& script_path)
-			{
-				FString Text;
-				if (FFileHelper::LoadFileToString(Text, *(script_path / TEXT("package.json"))))
-				{
-					Text = FString::Printf(TEXT("(function (json) {return json.main;})(%s);"), *Text);
-					auto full_path = IFileManager::Get().ConvertToAbsolutePathForExternalAppForRead(*script_path);
+				auto fullPath = IFileManager::Get().ConvertToAbsolutePathForExternalAppForRead(*jsonPath);
 #if PLATFORM_WINDOWS
-					full_path = full_path.Replace(TEXT("/"), TEXT("\\"));
+				fullPath = fullPath.Replace(TEXT("/"), TEXT("\\"));
 #endif
-					auto exports = Self->RunScript(full_path, Text, 0);
-					if (exports.IsEmpty() || !exports->IsString())
-					{
-						return false;
-					}
-					else
-					{
-						return inner_maybejs(script_path / StringFromV8(exports));
-					}
-				}
-
-				return false;
-			};
-
-			auto inner_json = [&](const FString& script_path)
-			{
-				auto full_path = IFileManager::Get().ConvertToAbsolutePathForExternalAppForRead(*script_path);
-#if PLATFORM_WINDOWS
-				full_path = full_path.Replace(TEXT("/"), TEXT("\\"));
-#endif
-				auto it = Self->Modules.Find(full_path);
+				auto it = self->Modules.Find(fullPath);
 				if (it)
 				{
 					info.GetReturnValue().Set(Local<Value>::New(isolate, *it));
-					found = true;
 					return true;
 				}
 
-				FString Text;
-				if (FFileHelper::LoadFileToString(Text, *script_path))
+				FString jsonText;
+				if (FFileHelper::LoadFileToString(jsonText, *fullPath))
 				{
-					Text = FString::Printf(TEXT("(function (json) {return json;})(%s);"), *Text);
-
-#if PLATFORM_WINDOWS
-					full_path = full_path.Replace(TEXT("/"), TEXT("\\"));
-#endif
-					auto exports = Self->RunScript(full_path, Text, 0);
-					if (exports.IsEmpty() || !exports->IsObject())
+					jsonText = FString::Printf(TEXT("(function (json) {return json;})(%s);"), *jsonText);
+					auto jsonObject = self->RunScript(fullPath, jsonText, 0);
+					if (jsonObject->IsObject())
 					{
-						return false;
-					}
-					else
-					{
-						Self->Modules.Add(full_path, UniquePersistent<Value>(isolate, exports));
-						info.GetReturnValue().Set(exports);
-						found = true;
+						self->Modules.Add(fullPath, v8::Global<Value>(isolate, jsonObject));
+						info.GetReturnValue().Set(jsonObject);
 						return true;
 					}
 				}
@@ -1454,110 +1560,34 @@ public:
 				return false;
 			};
 
-			auto inner2 = [&](FString base_path)
+			auto currentScriptPath = StringFromV8(
+				StackTrace::CurrentStackTrace(isolate, 1, StackTrace::kScriptName)->GetFrame(0)->GetScriptName()
+			);
+			currentScriptPath = FPaths::GetPath(URLToLocalPath(currentScriptPath));
+
+			FString resolvedModuleFilename = self->ResolveModuleFilename(requiredModule, currentScriptPath);
+			if (!resolvedModuleFilename.IsEmpty())
 			{
-				if (!FPaths::DirectoryExists(base_path)) return false;
-
-				auto script_path = base_path / required_module;
-				if (script_path.EndsWith(TEXT(".js")))
-				{
-					if (inner(script_path)) return true;
-				}
-				else
-				{
-					if (inner(script_path + TEXT(".js"))) return true;
-				}
-				if (script_path.EndsWith(TEXT(".json")))
-				{
-					if (inner_json(script_path)) return true;
-				}
-				else
-				{
-					if (inner_json(script_path + TEXT(".json"))) return true;
-				}
-
-				if (inner(script_path / TEXT("index.js"))) return true;
-				if (inner_package_json(script_path)) return true;
-
-				return false;
-			};
-
-			auto load_module_paths = [&](FString base_path)
-			{
-				TArray<FString> Dirs;
-				TArray<FString> Parsed;
-				base_path.ParseIntoArray(Parsed, TEXT("/"));
-				auto PartCount = Parsed.Num();
-				while (PartCount > 0) {
-					if (Parsed[PartCount-1].Equals(TEXT("node_modules")))
-					{
-						PartCount--;
-						continue;
-					}
-					else
-					{
-						TArray<FString> Parts;
-						for (int i = 0; i < PartCount; i++) Parts.Add(Parsed[i]);
-						FString Dir = FString::Join(Parts, TEXT("/"));
-						Dirs.Add(Dir);
-					}
-					PartCount--;
-				}
-
-				return Dirs;
-			};
-
-			auto load_node_modules = [&](FString base_path)
-			{
-				TArray<FString> paths = load_module_paths(base_path);
-				auto founded = false;
-				for (const auto& path : paths)
-				{
-					if (inner2(path / TEXT("node_modules")))
-					{
-						founded = true;
-						break;
-					}
-				}
-				return founded;
-			};
-
-			auto current_script_path = FPaths::GetPath(StringFromV8(StackTrace::CurrentStackTrace(isolate, 1, StackTrace::kScriptName)->GetFrame(0)->GetScriptName()));
-			current_script_path = URLToLocalPath(current_script_path);
-
-			if (!(required_module[0] == '.' && inner2(current_script_path)))
-			{
-				for (const auto& path : load_module_paths(current_script_path))
-				{
-					if (inner2(path)) break;
-					if (inner2(path / TEXT("node_modules"))) break;
-				}
-
-				for (const auto& path : Self->Paths)
-				{
-					if (inner2(path)) break;
-					if (inner2(path / TEXT("node_modules"))) break;
-				}
+				if (resolvedModuleFilename.EndsWith(TEXT(".js")) && loadModule(resolvedModuleFilename))
+					return;
+				if (resolvedModuleFilename.EndsWith(TEXT(".json")) && loadJson(resolvedModuleFilename))
+					return;
 			}
-
-			if (!found)
-			{
-				info.GetReturnValue().Set(Undefined(isolate));
-			}
+			info.GetReturnValue().Set(v8::Undefined(isolate));
 		};
 
 		auto fn2 = [](const FunctionCallbackInfo<Value>& info) {
 			auto isolate = info.GetIsolate();
 			HandleScope scope(isolate);
 
-			auto Self = reinterpret_cast<FJavascriptContextImplementation*>((Local<External>::Cast(info.Data()))->Value());
-			Self->PurgeModules();
+			auto self = reinterpret_cast<FJavascriptContextImplementation*>((Local<External>::Cast(info.Data()))->Value());
+			self->PurgeModules();
 		};
 
 		auto global = context()->Global();
 		auto self = External::New(isolate(), this);
 
-		global->Set(V8_KeywordString(isolate(), "require"), FunctionTemplate::New(isolate(), fn, self)->GetFunction());
+		global->Set(V8_KeywordString(isolate(), "require"), FunctionTemplate::New(isolate(), RequireWrapper, self)->GetFunction());
 		global->Set(V8_KeywordString(isolate(), "purge_modules"), FunctionTemplate::New(isolate(), fn2, self)->GetFunction());
 
 		auto getter = [](Local<String> property, const PropertyCallbackInfo<Value>& info) {
@@ -1808,10 +1838,10 @@ public:
 		}
 	}
 
-    void FindPathFile(FString TargetRootPath, FString TargetFileName, TArray<FString>& OutFiles)
-    {
-        IFileManager::Get().FindFilesRecursive(OutFiles, TargetRootPath.GetCharArray().GetData(), TargetFileName.GetCharArray().GetData(), true, false);
-    }
+	void FindPathFile(FString TargetRootPath, FString TargetFileName, TArray<FString>& OutFiles)
+	{
+		IFileManager::Get().FindFilesRecursive(OutFiles, TargetRootPath.GetCharArray().GetData(), TargetFileName.GetCharArray().GetData(), true, false);
+	}
 
 	void Expose(FString RootName, UObject* Object)
 	{
