@@ -234,33 +234,27 @@ struct TypingGenerator : TypingGeneratorBase
 	{
 		TokenWriter w(*this);
 
-		auto enumName = FV8Config::Safeify(source->GetName());
+		FString enumName = FV8Config::Safeify(source->GetName());
 		w.push("declare type ");
 		w.push(enumName);
 		w.push(" = ");
 
-		
+		int32 numMembers = source->NumEnums();
+		bool bEnumHasValidMember = false;
 
-		auto MaxStringLiteralEnumValue = source->GetMaxEnumValue();
-
-		TSet<FString> StringLiteralVisited;
-
-		for (decltype(MaxStringLiteralEnumValue) Index = 0; Index < MaxStringLiteralEnumValue; ++Index)
+		for (int32 i = 0; i < numMembers; ++i)
 		{
-
-			auto name = source->GetNameStringByIndex(Index);
-			if ( StringLiteralVisited.Find(name) ) continue;
-			StringLiteralVisited.Add(name);
-		}
-
-		auto MaxStringLiteralValues = StringLiteralVisited.Num();
-		for (int32 Index = 0; Index < MaxStringLiteralValues; Index++) {
-			auto name = StringLiteralVisited.Array()[Index];
-			w.push("'");
-			w.push(name);
-			w.push("'");
-			if (Index < MaxStringLiteralValues - 1) {
-				w.push(" | ");
+			FString memberName = source->GetNameStringByIndex(i);
+			if (!memberName.IsEmpty())
+			{
+				if (bEnumHasValidMember && (i > 0))
+				{
+					w.push(" | ");
+				}
+				w.push("'");
+				w.push(memberName);
+				w.push("'");
+				bEnumHasValidMember = true;
 			}
 		}
 
@@ -270,22 +264,23 @@ struct TypingGenerator : TypingGeneratorBase
 		w.push(enumName);
 		w.push(" : { ");
 
-		auto MaxEnumValue = source->GetMaxEnumValue();
-
-		TSet<FString> Visited;
-
-		for (decltype(MaxEnumValue) Index = 0; Index < MaxEnumValue; ++Index)
+		bEnumHasValidMember = false;
+		for (int32 i = 0; i < numMembers; ++i)
 		{
-			auto name = source->GetNameStringByIndex(Index);
-
-			if (Visited.Find(name)) continue;
-			Visited.Add(name);
-
-			w.push(name);
-			w.push(":");
-			w.push("'");
-			w.push(name);
-			w.push("',");
+			FString memberName = source->GetNameStringByIndex(i);
+			if (!memberName.IsEmpty())
+			{
+				if (bEnumHasValidMember && (i > 0))
+				{
+					w.push(",");
+				}
+				w.push(memberName);
+				w.push(":");
+				w.push("'");
+				w.push(memberName);
+				w.push("'");
+				bEnumHasValidMember = true;
+			}
 		}
 
 		w.push(" };\n");
