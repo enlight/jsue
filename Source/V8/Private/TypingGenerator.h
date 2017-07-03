@@ -68,7 +68,7 @@ struct TokenWriter
 	{
 		return *Text;
 	}
-	
+
 	void push(UProperty* Property)
 	{
 		if (auto p = Cast<UIntProperty>(Property))
@@ -206,7 +206,7 @@ struct TokenWriter
 			push(indent);
 			push("*/\n");
 		}
-	}	
+	}
 };
 
 struct TypingGenerator : TypingGeneratorBase
@@ -219,7 +219,7 @@ struct TypingGenerator : TypingGeneratorBase
 
 	FString Text;
 
-	TArray<FString> Folded;	
+	TArray<FString> Folded;
 
 	void fold(bool force = false)
 	{
@@ -300,11 +300,11 @@ struct TypingGenerator : TypingGeneratorBase
 
 	virtual void ExportStruct(UStruct* source) override
 	{
-		TokenWriter w(*this);		
+		TokenWriter w(*this);
 
 		const auto name = FV8Config::Safeify(source->GetName());
 		auto super_class = source->GetSuperStruct();
-		
+
 		w.tooltip("", source);
 
 		w.push("declare class ");
@@ -511,7 +511,7 @@ struct TypingGenerator : TypingGeneratorBase
 		}
 
 		w.push("}\n\n");
-		
+
 		Text.Append(*w);
 
 		fold();
@@ -538,7 +538,7 @@ struct TypingGenerator : TypingGeneratorBase
 		w.push("}\n\n");
 
 		w.push("declare class Process {\n");
-		w.push("\tnextTick(fn : (number) => void): void;\n");		
+		w.push("\tnextTick(fn : (number) => void): void;\n");
 		w.push("}\n\n");
 		w.push("declare var process : Process;\n\n");
 
