@@ -15,8 +15,12 @@ var devrequire = function (opts) {
         return changed_modules        
     }    
     function default_exec() {
-        self.purge_modules()        
-        return require(target)()
+        self.purge_modules();
+        const module = require(target);
+        if (module.__esModule && module.default) {
+            return module.default();
+        }
+        return module();
     }
     var get_change = opts.get_change || default_get_change;
     var exec = opts.exec || default_exec;
