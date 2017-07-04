@@ -2,6 +2,7 @@
 
 #include "Config.h"
 #include "FileHelper.h"
+#include "Runtime/Engine/Classes/Kismet/BlueprintFunctionLibrary.h"
 
 struct TypingGeneratorBase
 {
@@ -314,8 +315,15 @@ struct TypingGenerator : TypingGeneratorBase
 		{
 			Export(super_class);
 
-			w.push(" extends ");
-			w.push(FV8Config::Safeify(super_class->GetName()));
+			// The fact that UBlueprintFunctionLibrary is derived from UObject is an implementation
+			// detail that's of no relevance to the JS bindings, so omit the relationship from the
+			// type definitions to minimize potential naming conflicts in static methods of
+			// Blueprint function libs.
+			if (Cast<UClass>(source) != UBlueprintFunctionLibrary::StaticClass())
+			{
+				w.push(" extends ");
+				w.push(FV8Config::Safeify(super_class->GetName()));
+			}
 		}
 		w.push(" { \n");
 
