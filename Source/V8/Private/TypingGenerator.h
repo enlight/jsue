@@ -130,7 +130,7 @@ struct TokenWriter
 		else if (auto p = Cast<UEnumProperty>(Property))
 		{
 			generator.Export(p->GetEnum());
-			push(FV8Config::Safeify(p->GetName()));
+			push(FV8Config::Safeify(p->GetEnum()->GetName()));
 		}
 		else if (auto p = Cast<UMulticastDelegateProperty>(Property))
 		{
