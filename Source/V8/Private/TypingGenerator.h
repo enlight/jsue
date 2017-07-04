@@ -546,7 +546,7 @@ struct TypingGenerator : TypingGeneratorBase
 		w.push("}\n\n");
 
 		w.push("declare class Process {\n");
-		w.push("\tnextTick(fn : (number) => void): void;\n");
+		w.push("\tnextTick(fn : (elapsedTimeInMillisecs: number) => void): void;\n");
 		w.push("}\n\n");
 		w.push("declare var process : Process;\n\n");
 
