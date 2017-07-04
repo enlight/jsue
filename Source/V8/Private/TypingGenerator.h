@@ -327,17 +327,16 @@ struct TypingGenerator : TypingGeneratorBase
 		}
 		w.push(" { \n");
 
-		for (TFieldIterator<UProperty> PropertyIt(source, EFieldIteratorFlags::ExcludeSuper); PropertyIt; ++PropertyIt)
+		for (UProperty* property : TFieldRange<UProperty>(source, EFieldIteratorFlags::ExcludeSuper))
 		{
-			auto Property = *PropertyIt;
-			auto PropertyName = FV8Config::Safeify(Property->GetName());
+			auto propertyName = FV8Config::Safeify(property->GetName());
 
-			w.tooltip("\t", Property);
+			w.tooltip("\t", property);
 
 			w.push("\t");
-			w.push(PropertyName);
+			w.push(propertyName);
 			w.push(": ");
-			w.push(Property);
+			w.push(property);
 			w.push(";\n");
 		}
 
@@ -391,22 +390,22 @@ struct TypingGenerator : TypingGeneratorBase
 			if (has_out_ref)
 			{
 				TArray<FString> Arguments;
-				for (TFieldIterator<UProperty> ParamIt(Function); ParamIt; ++ParamIt)
+				for (UProperty* param : TFieldRange<UProperty>(Function))
 				{
 					TokenWriter w2(*this);
 
-					if ((ParamIt->PropertyFlags & (CPF_Parm | CPF_ReturnParm)) == (CPF_Parm | CPF_ReturnParm))
+					if (param->HasAllPropertyFlags(CPF_Parm | CPF_ReturnParm))
 					{
 						w2.push("$: ");
-						w2.push(*ParamIt);
+						w2.push(param);
 
 						Arguments.Add(*w2);
 					}
-					else if ((ParamIt->PropertyFlags & (CPF_ConstParm | CPF_OutParm)) == CPF_OutParm)
+					else if ((param->PropertyFlags & (CPF_ConstParm | CPF_OutParm)) == CPF_OutParm)
 					{
-						w2.push(ParamIt->GetName());
+						w2.push(param->GetName());
 						w2.push(": ");
-						w2.push(*ParamIt);
+						w2.push(param);
 
 						Arguments.Add(*w2);
 					}
@@ -418,11 +417,11 @@ struct TypingGenerator : TypingGeneratorBase
 			else
 			{
 				bool has_return = false;
-				for (TFieldIterator<UProperty> ParamIt(Function); ParamIt; ++ParamIt)
+				for (UProperty* param : TFieldRange<UProperty>(Function))
 				{
-					if ((ParamIt->PropertyFlags & (CPF_Parm | CPF_ReturnParm)) == (CPF_Parm | CPF_ReturnParm))
+					if (param->HasAllPropertyFlags(CPF_Parm | CPF_ReturnParm))
 					{
-						w.push(*ParamIt);
+						w.push(param);
 						has_return = true;
 						break;
 					}
@@ -482,13 +481,12 @@ struct TypingGenerator : TypingGeneratorBase
 			w.push(name);
 			w.push(";\n");
 
-			for (TFieldIterator<UFunction> FuncIt(klass, EFieldIteratorFlags::ExcludeSuper); FuncIt; ++FuncIt)
+			for (UFunction* function : TFieldRange<UFunction>(klass, EFieldIteratorFlags::ExcludeSuper))
 			{
-				UFunction* Function = *FuncIt;
-
-				if (!FV8Config::CanExportFunction(klass, Function)) continue;
-
-				write_function(Function,false);
+				if (FV8Config::CanExportFunction(klass, function))
+				{
+					write_function(function, false);
+				}
 			}
 		}
 		else
