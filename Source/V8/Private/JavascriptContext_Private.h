@@ -30,7 +30,7 @@ struct FJavascriptContext : TSharedFromThis<FJavascriptContext>
 	virtual bool WriteAliases(const FString& Filename) = 0;
 	virtual bool WriteDTS(const FString& Filename, bool bIncludingTooltip) = 0;
 	virtual bool HasProxyFunction(UObject* Holder, UFunction* Function) = 0;
-	virtual bool CallProxyFunction(UObject* Holder, UObject* This, UFunction* FunctionToCall, void* Parms) = 0;	
+	virtual bool CallProxyFunction(UObject* Holder, UObject* This, UFunction* FunctionToCall, void* Parms) = 0;
 
 	virtual void UncaughtException(const FString& Exception) = 0;
 

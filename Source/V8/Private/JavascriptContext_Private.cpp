@@ -1332,7 +1332,7 @@ public:
 	 * Resolve a module filename to an actual file on disk.
 	 *
 	 * @param moduleFilename An absolute filename, relative filename, or name of the module to resolve.
-	 * @param currentScriptPath Directory relative to which a relative module filename will be resolved. 
+	 * @param currentScriptPath Directory relative to which a relative module filename will be resolved.
 	 * @return The absolute filename of the module, or an empty string (on failure).
 	 */
 	FString ResolveModuleFilename(const FString& moduleFilename, const FString& currentScriptPath)
@@ -1430,7 +1430,7 @@ public:
 			TArray<FString> Parsed;
 			base_path.ParseIntoArray(Parsed, TEXT("/"));
 			auto PartCount = Parsed.Num();
-			while (PartCount > 0) 
+			while (PartCount > 0)
 			{
 				if (Parsed[PartCount - 1].Equals(TEXT("node_modules")))
 				{
@@ -1461,7 +1461,7 @@ public:
 
 		if (moduleFilename[0] == '.' && resolveModule(currentScriptPath, moduleFilename, resolvedFilename))
 			return resolvedFilename;
-			
+
 		for (const auto& path : load_module_paths(currentScriptPath))
 		{
 			if (resolveModule(path, moduleFilename, resolvedFilename))
@@ -1483,7 +1483,7 @@ public:
 	/** Expose `require`, `purgeModules`, and `modules` in the global V8 scope. */
 	void ExposeRequire()
 	{
-		auto RequireWrapper = [](const FunctionCallbackInfo<Value>& info) 
+		auto RequireWrapper = [](const FunctionCallbackInfo<Value>& info)
 		{
 			auto isolate = info.GetIsolate();
 			HandleScope scope(isolate);
