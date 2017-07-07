@@ -862,8 +862,8 @@ public:
 		Context::Scope context_scope(context());
 
 		ExposeRequire();
-		ExportUnrealEngineClasses();
-		ExportUnrealEngineStructs();
+		ExposeCreateClass();
+		ExposeCreateStruct();
 
 		ExposeMemory2();
 	}
@@ -873,7 +873,10 @@ public:
 		Modules.Empty();
 	}
 
-	void ExportUnrealEngineClasses()
+	/**
+	* Expose the CreateClass function in the global V8 scope.
+	*/
+	void ExposeCreateClass()
 	{
 		auto fn = [](const FunctionCallbackInfo<Value>& info) {
 			auto Context = reinterpret_cast<FJavascriptContextImplementation*>((Local<External>::Cast(info.Data()))->Value());
@@ -1250,7 +1253,10 @@ public:
 		global->Set(V8_KeywordString(isolate(), "CreateClass"), FunctionTemplate::New(isolate(), fn, self)->GetFunction());
 	}
 
-	void ExportUnrealEngineStructs()
+	/**
+	 * Expose the CreateStruct function in the global V8 scope.
+	 */
+	void ExposeCreateStruct()
 	{
 		auto fn = [](const FunctionCallbackInfo<Value>& info) {
 			auto Context = reinterpret_cast<FJavascriptContextImplementation*>((Local<External>::Cast(info.Data()))->Value());
