@@ -2379,23 +2379,24 @@ public:
 		}
 	}	
 
-	Local<Value> ExportEnum(UEnum* Enum)
+	Local<Value> ExportEnum(const UEnum* enumToExport)
 	{
-		FIsolateHelper I(isolate_);		
+		int32 numMembers = enumToExport->NumEnums();
+		auto arr = Array::New(isolate_, numMembers);
 
-		auto MaxEnumValue = Enum->GetMaxEnumValue();
-		auto arr = Array::New(isolate_, MaxEnumValue);
-
-		for (decltype(MaxEnumValue) Index = 0; Index < MaxEnumValue; ++Index)
+		for (int32 i = 0; i < numMembers; ++i)
 		{
-			auto value = I.Keyword(Enum->GetNameStringByIndex(Index));
-			arr->Set(Index, value);
-			arr->Set(value, value);
+			FString memberName = enumToExport->GetNameStringByIndex(i);
+			if (!memberName.IsEmpty())
+			{
+				auto memberKey = V8_KeywordString(isolate_, memberName);
+				arr->Set(i, memberKey);
+				arr->Set(memberKey, memberKey);
+			}
 		}
 
-		// public name
-		auto name = I.Keyword(FV8Config::Safeify(Enum->GetName()));
-		GetGlobalTemplate()->Set(name, arr);
+		auto enumName = V8_KeywordString(isolate_, FV8Config::Safeify(enumToExport->GetName()));
+		GetGlobalTemplate()->Set(enumName, arr);
 
 		return arr;
 	}
