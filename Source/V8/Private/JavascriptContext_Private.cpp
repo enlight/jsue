@@ -766,8 +766,10 @@ public:
 	bool IsValid() const { return Magic == MagicNumber; }
 
 public:
-
+	/** Maps a module path to a V8 object that represents a JavaScript module. */
 	TMap<FString, v8::Global<Value>> Modules;
+	/** Maps a module name to a V8 object that represents a C++ module. */
+	TMap<FString, v8::Global<v8::Function>> NativeModules;
 	TArray<FString>& Paths;
 
 	void SetAsDebugContext(int32 InPort)
@@ -871,6 +873,7 @@ public:
 	void PurgeModules()
 	{
 		Modules.Empty();
+		NativeModules.Empty();
 	}
 
 	/**
@@ -1329,6 +1332,35 @@ public:
 	}
 
 	/**
+	 * Create a V8 object that wraps a native UE4 module.
+	 * The V8 object will have properties that correspond to the UClass(es) available in the UE4
+	 * module.
+	 *
+	 * @param moduleName The name of a UE4 module, e.g. "Engine", "AIModule".
+	 * @return V8 object that represents a module instance, or undefined if the module couldn't be
+	 *         loaded.
+	 */
+	v8::Local<v8::Value> LoadNativeModule(const FString& moduleName)
+	{
+		// grab the module from the cache if possible
+		auto nativeModulePtr = NativeModules.Find(moduleName);
+		if (nativeModulePtr)
+		{
+			return v8::Local<v8::Function>::New(isolate(), *nativeModulePtr);
+		}
+		// it's not in the cache yet so create a new instance of the module
+		auto moduleTemplatePtr = Environment->ModuleNameToFunctionTemplateMap.Find(moduleName);
+		if (moduleTemplatePtr)
+		{
+			auto moduleTemplate = v8::Local<v8::FunctionTemplate>::New(isolate(), *moduleTemplatePtr);
+			auto nativeModule = v8::Local<v8::Function>::New(isolate(), moduleTemplate->GetFunction());
+			NativeModules.Add(moduleName, v8::Global<v8::Function>(isolate(), nativeModule));
+			return nativeModule;
+		}
+		return v8::Undefined(isolate());
+	}
+
+	/**
 	 * Resolve a module filename to an actual file on disk.
 	 *
 	 * @param moduleFilename An absolute filename, relative filename, or name of the module to resolve.
@@ -1495,8 +1527,6 @@ public:
 
 			auto self = reinterpret_cast<FJavascriptContextImplementation*>((Local<External>::Cast(info.Data()))->Value());
 
-			auto requiredModule = StringFromV8(info[0]);
-
 			auto loadModule = [&self, &info, &isolate](const FString& modulePath) -> bool
 			{
 				auto fullPath = IFileManager::Get().ConvertToAbsolutePathForExternalAppForRead(*modulePath);
@@ -1571,13 +1601,24 @@ public:
 			);
 			currentScriptPath = FPaths::GetPath(URLToLocalPath(currentScriptPath));
 
-			FString resolvedModuleFilename = self->ResolveModuleFilename(requiredModule, currentScriptPath);
-			if (!resolvedModuleFilename.IsEmpty())
+			FString requiredModule = StringFromV8(info[0]);
+			FString nativeModulePrefix(TEXT("jsue/"));
+			if (requiredModule.StartsWith(nativeModulePrefix, ESearchCase::CaseSensitive))
 			{
-				if (resolvedModuleFilename.EndsWith(TEXT(".js")) && loadModule(resolvedModuleFilename))
-					return;
-				if (resolvedModuleFilename.EndsWith(TEXT(".json")) && loadJson(resolvedModuleFilename))
-					return;
+				auto nativeModule = self->LoadNativeModule(requiredModule.RightChop(nativeModulePrefix.Len()));
+				info.GetReturnValue().Set(nativeModule);
+				return;
+			}
+			else
+			{
+				FString resolvedModuleFilename = self->ResolveModuleFilename(requiredModule, currentScriptPath);
+				if (!resolvedModuleFilename.IsEmpty())
+				{
+					if (resolvedModuleFilename.EndsWith(TEXT(".js")) && loadModule(resolvedModuleFilename))
+						return;
+					if (resolvedModuleFilename.EndsWith(TEXT(".json")) && loadJson(resolvedModuleFilename))
+						return;
+				}
 			}
 			info.GetReturnValue().Set(v8::Undefined(isolate));
 		};
@@ -2158,6 +2199,17 @@ public:
 		else
 		{
 			return false;
+		}
+	}
+
+	virtual void AddClassFunctionToNativeModule(const FString& moduleName,
+		const FString& className, const v8::Local<v8::Function>& classFunction) override
+	{
+		auto nativeModulePtr = NativeModules.Find(moduleName);
+		if (nativeModulePtr)
+		{
+			auto nativeModule = v8::Local<v8::Function>::New(isolate(), *nativeModulePtr);
+			nativeModule->Set(V8_KeywordString(isolate(), className), classFunction);
 		}
 	}
 

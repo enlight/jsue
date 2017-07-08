@@ -460,6 +460,8 @@ public:
 		// Release all exported structs(non-class)
 		ScriptStructToFunctionTemplateMap.Empty();
 
+		ModuleNameToFunctionTemplateMap.Empty();
+
 		// Release global template
 		GlobalTemplate.Reset();
 	}
@@ -2569,37 +2571,66 @@ public:
 #endif
 	}
 
-	template <typename StructType>
-	void RegisterStruct(TMap< StructType*, v8::UniquePersistent<v8::FunctionTemplate> >& TheMap, StructType* Class, Local<FunctionTemplate> Template)
+	template <typename StructT>
+	void RegisterStruct(TMap<StructT*, v8::UniquePersistent<v8::FunctionTemplate>>& classMap,
+		StructT* ueClass, v8::Local<v8::FunctionTemplate> classTemplate)
 	{
-		FIsolateHelper I(isolate_);
+		FString className = FV8Config::Safeify(ueClass->GetName());
+		auto classKey = V8_KeywordString(isolate_, className);
 
-		// public name
-		auto name = I.Keyword(FV8Config::Safeify(Class->GetName()));
-
-		// If we are running in a context, we also register this class to the context directly.
-		auto Context = isolate_->GetCurrentContext();
-		if (!Context.IsEmpty())
+		const UPackage* package = ueClass->GetOutermost();
+		FString moduleName = package->GetName();
+		if (!moduleName.RemoveFromStart("/Script/", ESearchCase::CaseSensitive))
 		{
-			Context->Global()->Set(name, Template->GetFunction());
+			// NOTE: Some packages don't have a /Script/ prefix, but they appear to be internal
+			//       and are unlikely to be of any use to most developers, so we simply skip
+			//       them.
+			return;
 		}
 
-		// Register this class to the global template so that any other contexts which will be created later have this function template.
-		GetGlobalTemplate()->Set(name, Template);
+		// If there's an active context register the class in that context.
+		v8::Local<v8::Context> context = isolate_->GetCurrentContext();
+		if (!context.IsEmpty())
+		{
+			v8::Local<v8::Function> classFunction = classTemplate->GetFunction();
+			FJavascriptContext* nativeContext = FJavascriptContext::FromV8(context);
+			if (nativeContext)
+			{
+				nativeContext->AddClassFunctionToNativeModule(moduleName, className, classFunction);
+			}
+			// TODO: The class is exposed in the global scope for backwards compatibility,
+			//       once all the scripts are updated to use modules this can be removed.
+			context->Global()->Set(classKey, classFunction);
+		}
+
+		// Add the class template to the corresponding module template.
+		v8::Local<v8::FunctionTemplate> moduleTemplate;
+		auto moduleTemplatePtr = ModuleNameToFunctionTemplateMap.Find(moduleName);
+		if (moduleTemplatePtr)
+		{
+			moduleTemplate = v8::Local<v8::FunctionTemplate>::New(isolate_, *moduleTemplatePtr);
+		}
+		else
+		{
+			moduleTemplate = v8::FunctionTemplate::New(isolate_);
+			ModuleNameToFunctionTemplateMap.Add(moduleName,
+				v8::Global<v8::FunctionTemplate>(isolate_, moduleTemplate));
+		}
+		moduleTemplate->Set(classKey, classTemplate);
+
+		// TODO: The class is exposed in the global scope for backwards compatibility,
+		//       once all the scripts are updated to use modules this can be removed.
+		GetGlobalTemplate()->Set(classKey, classTemplate);
 
 		// Track this class from v8 gc.
-		auto& result = TheMap.Add(Class, UniquePersistent<FunctionTemplate>(isolate_, Template));
-		SetWeak(result, Class);
+		auto& result = classMap.Add(ueClass,
+			UniquePersistent<FunctionTemplate>(isolate_, classTemplate));
+		SetWeak(result, ueClass);
 	}
 
 	virtual void RegisterClass(UClass* Class, Local<FunctionTemplate> Template) override
 	{
 		RegisterStruct(ClassToFunctionTemplateMap, Class, Template);
-	}
-
-	void RegisterScriptStruct(UScriptStruct* Struct, Local<FunctionTemplate> Template)
-	{
-		RegisterStruct(ScriptStructToFunctionTemplateMap, Struct, Template);
 	}
 
 	void RegisterObject(UObject* UnrealObject, Local<Value> value)

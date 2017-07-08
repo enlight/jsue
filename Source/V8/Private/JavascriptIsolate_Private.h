@@ -20,6 +20,9 @@ struct FPendingClassConstruction
 class FJavascriptIsolate
 {
 public:
+	/** Maps a UE4 module name to a V8 template of a V8 module (that wraps the UE4 module) */
+	TMap<FString, v8::Global<v8::FunctionTemplate>> ModuleNameToFunctionTemplateMap;
+
 	/** A map from Unreal UClass to V8 Function template */
 	TMap< UClass*, v8::UniquePersistent<v8::FunctionTemplate> > ClassToFunctionTemplateMap;
 

@@ -38,6 +38,9 @@ struct FJavascriptContext : TSharedFromThis<FJavascriptContext>
 	virtual v8::Local<v8::Context> context() = 0;
 	virtual v8::Local<v8::Value> ExportObject(UObject* Object, bool bForce = false) = 0;
 	virtual v8::Local<v8::Value> GetProxyFunction(UObject* Object, const TCHAR* Name) = 0;
+	virtual void AddClassFunctionToNativeModule(const FString& moduleName,
+		const FString& className, const v8::Local<v8::Function>& classFunction
+	) = 0;
 
 	static FJavascriptContext* FromV8(v8::Local<v8::Context> Context);
 
