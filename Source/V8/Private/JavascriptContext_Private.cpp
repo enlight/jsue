@@ -17,7 +17,7 @@ PRAGMA_DISABLE_SHADOW_VARIABLE_WARNINGS
 #include "PropertyPortFlags.h"
 
 #if WITH_EDITOR
-#include "TypingGenerator.h"
+#include "TypingsGenerator.h"
 #endif
 
 #include "Helpers.h"
@@ -2121,7 +2121,7 @@ public:
 	bool WriteDTS(const FString& Filename, bool bIncludingTooltip)
 	{
 #if WITH_EDITOR
-		TypingGenerator instance(*(Environment.Get()));
+		FTypingsGenerator instance(*(Environment.Get()));
 
 		instance.no_tooltip = !bIncludingTooltip;
 
